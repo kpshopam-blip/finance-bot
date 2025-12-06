@@ -1,1 +1,5 @@
-flaskline-bot-sdkgspreadoauth2client
+flask
+line-bot-sdk
+gspread
+oauth2client
+gunicorn

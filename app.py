@@ -9,8 +9,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- ส่วนตั้งค่า (แก้ไขตรงนี้) ---
 # ใส่ Token จาก LINE Developers
-LINE_CHANNEL_ACCESS_TOKEN = '/Dn6rOn9XVwxXovQuEtbKC0enMkDRXPtOTt0agh/qTEC4NwTcowL/mTfWfxiQCYt1KmG/Q1mX4R+QuYYbfHVGJ4kaT1bWHGvPodzuVwQL01j53DGiyY5wxD4O+crE1vCdjJa9SS+JRBtpSgqE9NUSgdB04t89/1O/w1cDnyilFU='
-LINE_CHANNEL_SECRET = 'd4da085bb16423de96486045dcd0ffb8'
+LINE_CHANNEL_ACCESS_TOKEN = 'lVhohtPhKOMihlJw2qAqDhV7J+lNdDoeGbR9mpW0+lwx2cYnmV+qsKlnlOVXDa+Qo8JeSN8BuCBwg26S2n8VsC0lGd+1sWfO0yh8gkG2IIQGu8uSwDykY7FhYPTP6xcP/q7vcB8iEVdhuKN+UATwoAdB04t89/1O/w1cDnyilFU='
+LINE_CHANNEL_SECRET = '1e233aeba9151417a68ce59b5e0423e4'
 
 # ชื่อไฟล์ Google Sheet ที่คุณตั้งไว้
 GOOGLE_SHEET_NAME = 'ระบบนับจำนวนเคส'
@@ -150,3 +150,4 @@ def handle_message(event):
 if __name__ == "__main__":
 
     app.run()
+

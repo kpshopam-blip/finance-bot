@@ -45,7 +45,7 @@ def classify_message(text):
     # 1. เช็คคำถาม (Negative Check) -> ถ้าเจอคำพวกนี้ ให้หยุดทันที
     question_words = [
         "ไหม", "มั้ย", "มั๊ย", "ยัง", "หรอ", "รึเปล่า", "หรือเปล่า",
-        "ได้ปะ", "ได้ป่ะ", "รึยัง", "หรือยัง", "?", "สอบถาม"
+        "ได้ปะ", "ได้ป่ะ", "รึยัง", "หรือยัง", "?", "สอบถาม","ขอ"
     ]
     for word in question_words:
         if word in text:
@@ -230,3 +230,4 @@ def handle_message(event):
 
 if __name__ == "__main__":
     app.run()
+

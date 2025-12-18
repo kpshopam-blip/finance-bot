@@ -26,59 +26,84 @@ def get_worksheet(sheet_name):
     sheet = client.open(GOOGLE_SHEET_NAME)
     return sheet.worksheet(sheet_name)
 
-# --- ฟังก์ชันค้นหาชื่อร้านจาก Group ID ---
-def get_shop_name(group_id):
+# ==========================================
+# 🔧 ฟังก์ชันใหม่: ดึงชื่อกลุ่มจาก LINE และอัปเดตลง Sheet อัตโนมัติ
+# ==========================================
+def sync_group_name(group_id):
+    # 1. ดึงชื่อปัจจุบันจริงๆ จาก LINE API
+    try:
+        summary = line_bot_api.get_group_summary(group_id)
+        current_line_name = summary.group_name
+    except:
+        # ถ้าดึงไม่ได้ (เช่น เน็ตหลุด) ให้ใช้ชื่อสำรอง
+        current_line_name = f"Group_{group_id[-4:]}"
+
+    # 2. เช็คใน Google Sheet (Shops) ว่าชื่อตรงกันไหม
     try:
         sh = get_worksheet('Shops')
-        cell = sh.find(group_id)
-        return sh.cell(cell.row, 2).value
-    except:
-        return None
+        try:
+            cell = sh.find(group_id)
+            # เจอ ID เดิม -> เช็คชื่อซิว่าเปลี่ยนไหม?
+            stored_name = sh.cell(cell.row, 2).value
+            
+            if stored_name != current_line_name:
+                # ถ้าชื่อไม่ตรง (เปลี่ยนชื่อกลุ่มมา) -> อัปเดตเลย!
+                sh.update_cell(cell.row, 2, current_line_name)
+                print(f"Updated name change: {stored_name} -> {current_line_name}")
+            
+            return current_line_name
+
+        except:
+            # ไม่เจอ ID นี้ (ร้านใหม่) -> เพิ่มลงไปใหม่
+            sh.append_row([group_id, current_line_name])
+            print(f"Registered new shop: {current_line_name}")
+            return current_line_name
+
+    except Exception as e:
+        print(f"Error syncing group name: {e}")
+        return current_line_name
 
 # ==========================================
-# 🔧 ฟังก์ชันตรวจสอบและแยกประเภทข้อความ (Smart Filter)
+# ฟังก์ชันแยกประเภทข้อความ (เหมือนเดิม)
 # ==========================================
 def classify_message(text):
-    # ทำให้เป็นตัวเล็กทั้งหมด และตัดช่องว่าง
     text = text.lower().strip()
 
-    # 1. เช็คคำถาม (Negative Check) -> ถ้าเจอคำพวกนี้ ให้หยุดทันที
+    # 1. เช็คคำถาม (ไม่นับ)
     question_words = [
         "ไหม", "มั้ย", "มั๊ย", "ยัง", "หรอ", "รึเปล่า", "หรือเปล่า",
-        "ได้ปะ", "ได้ป่ะ", "รึยัง", "หรือยัง", "?", "สอบถาม","ขอ"
+        "ได้ปะ", "ได้ป่ะ", "รึยัง", "หรือยัง", "?", "สอบถาม","ขอ",
+        "ด้วย","หน่อย","ป่ะ","ปะ","หรือไม่","ใช่ไหม"
     ]
     for word in question_words:
         if word in text:
-            return None # เป็นคำถาม ไม่นับ
+            return None 
 
-    # 2. เช็คคำอนุมัติ (Approval) -> คอลัมน์ D
+    # 2. เช็คคำอนุมัติ -> คอลัมน์ D
     approve_keywords = [
-        "อนุมัติ", "อนุมัติครับ", "อนุมัติค่ะ"
+        "อนุมัติ", "อนุมัติครับ", "อนุมัติค่ะ","อนุมัต","อนมัติ"
     ]
     for word in approve_keywords:
         if word in text:
-            return 'approve' # ประเภทอนุมัติ
+            return 'approve' 
 
-    # 3. เช็คคำปล่อยเครื่อง (Release) -> คอลัมน์ E (ของเดิม)
+    # 3. เช็คคำปล่อยเครื่อง -> คอลัมน์ E
     release_keywords = [
-        "ปล่อยเครื่อง", "ปล่อยได้", "ปล่อยเลย", "ปล่อยเคส", "ปล่อย", "ปล่่อย"
+        "ปล่อยเครื่อง", "ปล่อยได้", "ปล่อยเลย", "ปล่อยเคส", "ปล่อย", "ปล่่อย","ปลอย"
     ]
     for word in release_keywords:
         if word in text:
-            return 'release' # ประเภทปล่อยเครื่อง
+            return 'release' 
 
-    return None # ไม่เข้าเงื่อนไข
+    return None
 
 # ==========================================
-# Route หน้าแรก (สำหรับ UptimeRobot)
+# Route
 # ==========================================
 @app.route("/")
 def home():
     return "Hello, Boss! I am awake and working."
 
-# ==========================================
-# Webhook Callback
-# ==========================================
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
@@ -89,39 +114,15 @@ def callback():
         abort(400)
     return 'OK'
 
-# ==========================================
-# Handle Join Event
-# ==========================================
 @handler.add(JoinEvent)
 def handle_join(event):
     group_id = event.source.group_id
-    try:
-        summary = line_bot_api.get_group_summary(group_id)
-        group_name = summary.group_name
-    except:
-        group_name = f"NewGroup_{group_id[-4:]}"
+    # ใช้ฟังก์ชันใหม่ sync_group_name ทีเดียวจบ (มันจะ save ลง sheet ให้เอง)
+    group_name = sync_group_name(group_id)
+    
+    reply_msg = f"✅ บันทึกชื่อร้านเรียบร้อย:\n{group_name}\n\nเริ่มงานได้เลยครับ!"
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_msg))
 
-    try:
-        sh = get_worksheet('Shops')
-        try:
-            existing_cell = sh.find(group_id)
-        except:
-            existing_cell = None
-
-        if existing_cell:
-            sh.update_cell(existing_cell.row, 2, group_name)
-            reply_msg = f"✅ อัปเดตข้อมูลร้านค้าเรียบร้อย:\n{group_name}"
-        else:
-            sh.append_row([group_id, group_name])
-            reply_msg = f"🎉 ขออนุญาตเชิญ Bot_IT4 เข้ากลุ่ม:\n{group_name}\n\nครับ!"
-
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_msg))
-    except Exception as e:
-        print(f"Error registering: {e}")
-
-# ==========================================
-# Handle Text Message
-# ==========================================
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     text = event.message.text.strip()
@@ -132,102 +133,80 @@ def handle_message(event):
     group_id = event.source.group_id
     today_str = datetime.date.today().strftime("%Y-%m-%d")
 
-    # แยกประเภทข้อความ: 'approve', 'release', หรือ None
     msg_type = classify_message(text)
 
     # -----------------------------------------------------
-    # 1. ถ้าเป็นข้อความนับยอด (Approve หรือ Release)
+    # ถ้าเป็นคำสั่งนับยอด หรือ สรุปยอด -> ให้ Sync ชื่อร้านก่อนเสมอ
     # -----------------------------------------------------
-    if msg_type:
-        try:
-            sh = get_worksheet('Log')
-            # ใช้ get_all_values เพื่อระบุตำแหน่งคอลัมน์ได้แม่นยำกว่า (ไม่สนชื่อ Header)
-            all_rows = sh.get_all_values()
-            
-            found_row_index = None
-            current_approve = 0
-            current_release = 0
-            
-            # วนลูปหาแถวที่ตรงกับ วันนี้ และ ร้านนี้ (ข้าม Header แถวที่ 0)
-            for i, row in enumerate(all_rows[1:]): 
-                # row[0] = Date, row[1] = GroupID
-                if str(row[0]) == today_str and str(row[1]) == group_id:
-                    found_row_index = i + 2 # +2 เพราะข้าม header และ index เริ่ม 0
-                    
-                    # ป้องกันกรณีข้อมูลว่าง ให้ถือเป็น 0
-                    try: current_approve = int(row[3]) if row[3] else 0 # Column D (Index 3)
-                    except: current_approve = 0
-                    
-                    try: current_release = int(row[4]) if row[4] else 0 # Column E (Index 4)
-                    except: current_release = 0
-                    break
-            
-            if found_row_index:
-                # เจอแถวเดิม -> อัปเดตยอด
-                if msg_type == 'approve':
-                    sh.update_cell(found_row_index, 4, current_approve + 1) # Col D
-                    print(f"Approve updated for {group_id}")
-                elif msg_type == 'release':
-                    sh.update_cell(found_row_index, 5, current_release + 1) # Col E
-                    print(f"Release updated for {group_id}")
-            else:
-                # ไม่เจอ -> สร้างแถวใหม่
-                shop_name = get_shop_name(group_id)
-                if not shop_name:
-                    try:
-                        summary = line_bot_api.get_group_summary(group_id)
-                        shop_name = summary.group_name
-                    except:
-                        shop_name = f"Group_{group_id[-4:]}"
+    if msg_type or text in ["สรุปยอด", "เช็คยอด", "ยอดวันนี้"]:
+        # 🔥 นี่คือจุดสำคัญ: บอทจะเช็คชื่อกลุ่มล่าสุดทุกครั้งที่ทำงาน
+        current_shop_name = sync_group_name(group_id)
+
+        # 1. ถ้าเป็นข้อความนับยอด
+        if msg_type:
+            try:
+                sh = get_worksheet('Log')
+                all_rows = sh.get_all_values()
                 
-                # สร้างแถวใหม่: [Date, GroupID, ShopName, Approve, Release]
-                if msg_type == 'approve':
-                    sh.append_row([today_str, group_id, shop_name, 1, 0])
-                elif msg_type == 'release':
-                    sh.append_row([today_str, group_id, shop_name, 0, 1])
+                found_row_index = None
+                current_approve = 0
+                current_release = 0
                 
-                print(f"New record created for {group_id}")
+                for i, row in enumerate(all_rows[1:]): 
+                    if str(row[0]) == today_str and str(row[1]) == group_id:
+                        found_row_index = i + 2
+                        
+                        # อัปเดตชื่อร้านใน Log ให้ตรงกับปัจจุบันด้วย (เผื่อเปลี่ยนชื่อวันนี้)
+                        if row[2] != current_shop_name:
+                             sh.update_cell(found_row_index, 3, current_shop_name)
 
-        except Exception as e:
-            print(f"Error writing to sheet: {e}")
+                        try: current_approve = int(row[3]) if row[3] else 0
+                        except: current_approve = 0
+                        try: current_release = int(row[4]) if row[4] else 0
+                        except: current_release = 0
+                        break
+                
+                if found_row_index:
+                    if msg_type == 'approve':
+                        sh.update_cell(found_row_index, 4, current_approve + 1)
+                    elif msg_type == 'release':
+                        sh.update_cell(found_row_index, 5, current_release + 1)
+                else:
+                    # สร้างแถวใหม่
+                    if msg_type == 'approve':
+                        sh.append_row([today_str, group_id, current_shop_name, 1, 0])
+                    elif msg_type == 'release':
+                        sh.append_row([today_str, group_id, current_shop_name, 0, 1])
 
-    # -----------------------------------------------------
-    # 2. เงื่อนไข: ดูรายงาน
-    # -----------------------------------------------------
-    elif text in ["สรุปยอด", "เช็คยอด", "ยอดวันนี้"]:
-        try:
-            sh = get_worksheet('Log')
-            all_rows = sh.get_all_values()
-            
-            approve_count = 0
-            release_count = 0
-            shop_name_display = "ร้านนี้"
-            
-            # ดึงชื่อร้านที่บันทึกไว้
-            stored_name = get_shop_name(group_id)
-            if stored_name:
-                shop_name_display = stored_name
+            except Exception as e:
+                print(f"Error writing to sheet: {e}")
 
-            for row in all_rows[1:]:
-                if str(row[0]) == today_str and str(row[1]) == group_id:
-                    # แปลงค่าเป็น int เพื่อความชัวร์
-                    try: approve_count = int(row[3]) if row[3] else 0
-                    except: approve_count = 0
-                    try: release_count = int(row[4]) if row[4] else 0
-                    except: release_count = 0
-                    break
-            
-            msg = f"📊 สรุปยอดวันนี้ ({today_str})\n"
-            msg += f"🏠 {shop_name_display}\n"
-            msg += f"------------------\n"
-            msg += f"✅ อนุมัติ: {approve_count} เคส\n"
-            msg += f"📦 ปล่อยเครื่อง: {release_count} เครื่อง"
-            
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
-        except Exception as e:
-             print(e)
-             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการดึงข้อมูลครับ"))
+        # 2. ถ้าขอดูรายงาน
+        elif text in ["สรุปยอด", "เช็คยอด", "ยอดวันนี้"]:
+            try:
+                sh = get_worksheet('Log')
+                all_rows = sh.get_all_values()
+                
+                approve_count = 0
+                release_count = 0
+                
+                for row in all_rows[1:]:
+                    if str(row[0]) == today_str and str(row[1]) == group_id:
+                        try: approve_count = int(row[3]) if row[3] else 0
+                        except: approve_count = 0
+                        try: release_count = int(row[4]) if row[4] else 0
+                        except: release_count = 0
+                        break
+                
+                msg = f"📊 สรุปยอดวันนี้ ({today_str})\n"
+                msg += f"🏠 {current_shop_name}\n" # ใช้ชื่อล่าสุดที่ดึงมาโชว์
+                msg += f"------------------\n"
+                msg += f"✅ อนุมัติ: {approve_count} เคส\n"
+                msg += f"📦 ปล่อยเครื่อง: {release_count} เครื่อง"
+                
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
+            except:
+                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text="เกิดข้อผิดพลาดในการดึงข้อมูลครับ"))
 
 if __name__ == "__main__":
     app.run()
-

@@ -3,7 +3,7 @@ import datetime
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError, LineBotApiError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage, JoinEvent
+from linebot.models import MessageEvent, TextMessage, TextSendMessage, JoinEvent, FileMessage
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -30,33 +30,25 @@ def get_worksheet(sheet_name):
 # 🔧 ฟังก์ชันใหม่: ดึงชื่อกลุ่มจาก LINE และอัปเดตลง Sheet อัตโนมัติ
 # ==========================================
 def sync_group_name(group_id):
-    # 1. ดึงชื่อปัจจุบันจริงๆ จาก LINE API
     try:
         summary = line_bot_api.get_group_summary(group_id)
         current_line_name = summary.group_name
     except:
-        # ถ้าดึงไม่ได้ (เช่น เน็ตหลุด) ให้ใช้ชื่อสำรอง
         current_line_name = f"Group_{group_id[-4:]}"
 
-    # 2. เช็คใน Google Sheet (Shops) ว่าชื่อตรงกันไหม
     try:
         sh = get_worksheet('Shops')
         try:
             cell = sh.find(group_id)
-            # เจอ ID เดิม -> เช็คชื่อซิว่าเปลี่ยนไหม?
             stored_name = sh.cell(cell.row, 2).value
             
             if stored_name != current_line_name:
-                # ถ้าชื่อไม่ตรง (เปลี่ยนชื่อกลุ่มมา) -> อัปเดตเลย!
                 sh.update_cell(cell.row, 2, current_line_name)
-                print(f"Updated name change: {stored_name} -> {current_line_name}")
             
             return current_line_name
 
         except:
-            # ไม่เจอ ID นี้ (ร้านใหม่) -> เพิ่มลงไปใหม่
             sh.append_row([group_id, current_line_name])
-            print(f"Registered new shop: {current_line_name}")
             return current_line_name
 
     except Exception as e:
@@ -119,12 +111,88 @@ def callback():
 @handler.add(JoinEvent)
 def handle_join(event):
     group_id = event.source.group_id
-    # ใช้ฟังก์ชันใหม่ sync_group_name ทีเดียวจบ (มันจะ save ลง sheet ให้เอง)
     group_name = sync_group_name(group_id)
-    
     reply_msg = f"✅ บันทึกชื่อร้านเรียบร้อย:\n{group_name}\n\nเริ่มงานได้เลยครับ!"
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_msg))
 
+# ==========================================
+# 🔥 ส่วนใหม่: จัดการไฟล์ (FileMessage) สำหรับนับสัญญา PDF
+# ==========================================
+@handler.add(MessageEvent, message=FileMessage)
+def handle_file(event):
+    if event.source.type != 'group':
+        return
+
+    file_name = event.message.file_name
+    
+    # เช็คว่าเป็นไฟล์ PDF หรือไม่ (ไม่สนตัวพิมพ์เล็กใหญ่)
+    if not file_name.lower().endswith('.pdf'):
+        return
+
+    # ตัดชื่อไฟล์เอาเฉพาะชื่อคนทำสัญญา (แยกด้วย _ )
+    # ตัวอย่าง: "พิสิทธิ์ พรมศรี_contract.pdf" -> เอาแค่ "พิสิทธิ์ พรมศรี"
+    if '_' in file_name:
+        contract_name = file_name.split('_')[0].strip()
+    else:
+        # กรณีไม่มี _ ให้เอาชื่อไฟล์ทั้งหมดตัด .pdf ออก
+        contract_name = os.path.splitext(file_name)[0].strip()
+
+    group_id = event.source.group_id
+    today_str = datetime.date.today().strftime("%Y-%m-%d")
+    
+    # Sync ชื่อร้าน
+    current_shop_name = sync_group_name(group_id)
+
+    try:
+        sh = get_worksheet('Log')
+        all_rows = sh.get_all_values()
+        
+        found_row_index = None
+        current_contract_count = 0
+        existing_names = []
+        
+        for i, row in enumerate(all_rows[1:]): 
+            if str(row[0]) == today_str and str(row[1]) == group_id:
+                found_row_index = i + 2
+                
+                # อ่านยอดสัญญาปัจจุบัน (Column F -> index 5)
+                try: current_contract_count = int(row[5]) if len(row) > 5 and row[5] else 0
+                except: current_contract_count = 0
+                
+                # อ่านรายชื่อคนที่เคยส่งแล้ว (Column G -> index 6)
+                try: 
+                    raw_names = str(row[6]) if len(row) > 6 else ""
+                    existing_names = [n.strip() for n in raw_names.split(',') if n.strip()]
+                except: existing_names = []
+                
+                break
+        
+        # --- ตรวจสอบว่าชื่อนี้เคยนับไปหรือยัง (De-duplicate) ---
+        if contract_name in existing_names:
+            print(f"Duplicate contract ignored: {contract_name}")
+            return # จบการทำงานทันที ถ้านับไปแล้ว
+
+        # ถ้ายอมให้ผ่าน (ชื่อใหม่) -> เพิ่มชื่อลง list และ +1
+        existing_names.append(contract_name)
+        new_names_str = ",".join(existing_names)
+        
+        if found_row_index:
+            # อัปเดตแถวเดิม: Col F (Count) และ Col G (NameList)
+            sh.update_cell(found_row_index, 6, current_contract_count + 1)
+            sh.update_cell(found_row_index, 7, new_names_str)
+            print(f"Contract updated: {contract_name}")
+        else:
+            # สร้างแถวใหม่ (เรียง: Date, ID, Shop, Approve(0), Release(0), Contract(1), NameList)
+            sh.append_row([today_str, group_id, current_shop_name, 0, 0, 1, new_names_str])
+            print(f"New contract record: {contract_name}")
+
+    except Exception as e:
+        print(f"Error handling file: {e}")
+
+
+# ==========================================
+# ส่วนจัดการข้อความ Text (นับอนุมัติ/ปล่อย)
+# ==========================================
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     text = event.message.text.strip()
@@ -137,14 +205,9 @@ def handle_message(event):
 
     msg_type = classify_message(text)
 
-    # -----------------------------------------------------
-    # ถ้าเป็นคำสั่งนับยอด หรือ สรุปยอด -> ให้ Sync ชื่อร้านก่อนเสมอ
-    # -----------------------------------------------------
     if msg_type or text in ["สรุปยอด", "เช็คยอด", "ยอดวันนี้"]:
-        # 🔥 นี่คือจุดสำคัญ: บอทจะเช็คชื่อกลุ่มล่าสุดทุกครั้งที่ทำงาน
         current_shop_name = sync_group_name(group_id)
 
-        # 1. ถ้าเป็นข้อความนับยอด
         if msg_type:
             try:
                 sh = get_worksheet('Log')
@@ -158,7 +221,6 @@ def handle_message(event):
                     if str(row[0]) == today_str and str(row[1]) == group_id:
                         found_row_index = i + 2
                         
-                        # อัปเดตชื่อร้านใน Log ให้ตรงกับปัจจุบันด้วย (เผื่อเปลี่ยนชื่อวันนี้)
                         if row[2] != current_shop_name:
                              sh.update_cell(found_row_index, 3, current_shop_name)
 
@@ -174,16 +236,15 @@ def handle_message(event):
                     elif msg_type == 'release':
                         sh.update_cell(found_row_index, 5, current_release + 1)
                 else:
-                    # สร้างแถวใหม่
+                    # สร้างแถวใหม่ (ระวังเรื่องจำนวนคอลัมน์ให้ครบ)
                     if msg_type == 'approve':
-                        sh.append_row([today_str, group_id, current_shop_name, 1, 0])
+                        sh.append_row([today_str, group_id, current_shop_name, 1, 0, 0, ""])
                     elif msg_type == 'release':
-                        sh.append_row([today_str, group_id, current_shop_name, 0, 1])
+                        sh.append_row([today_str, group_id, current_shop_name, 0, 1, 0, ""])
 
             except Exception as e:
                 print(f"Error writing to sheet: {e}")
 
-        # 2. ถ้าขอดูรายงาน
         elif text in ["สรุปยอด", "เช็คยอด", "ยอดวันนี้"]:
             try:
                 sh = get_worksheet('Log')
@@ -191,6 +252,7 @@ def handle_message(event):
                 
                 approve_count = 0
                 release_count = 0
+                contract_count = 0
                 
                 for row in all_rows[1:]:
                     if str(row[0]) == today_str and str(row[1]) == group_id:
@@ -198,13 +260,17 @@ def handle_message(event):
                         except: approve_count = 0
                         try: release_count = int(row[4]) if row[4] else 0
                         except: release_count = 0
+                        # อ่านยอดสัญญาเพิ่ม
+                        try: contract_count = int(row[5]) if len(row) > 5 and row[5] else 0
+                        except: contract_count = 0
                         break
                 
                 msg = f"📊 สรุปยอดวันนี้ ({today_str})\n"
-                msg += f"🏠 {current_shop_name}\n" # ใช้ชื่อล่าสุดที่ดึงมาโชว์
+                msg += f"🏠 {current_shop_name}\n"
                 msg += f"------------------\n"
                 msg += f"✅ อนุมัติ: {approve_count} เคส\n"
-                msg += f"📦 ปล่อยเครื่อง: {release_count} เครื่อง"
+                msg += f"📦 ปล่อยเครื่อง: {release_count} เครื่อง\n"
+                msg += f"📝 สัญญา: {contract_count} ฉบับ"
                 
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
             except:
@@ -212,7 +278,3 @@ def handle_message(event):
 
 if __name__ == "__main__":
     app.run()
-
-
-
-

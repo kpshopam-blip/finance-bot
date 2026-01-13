@@ -125,12 +125,18 @@ def handle_file(event):
 
     file_name = event.message.file_name
     
-    # เช็คว่าเป็นไฟล์ PDF หรือไม่ (ไม่สนตัวพิมพ์เล็กใหญ่)
+    # 1. เช็คว่าเป็นไฟล์ PDF หรือไม่
     if not file_name.lower().endswith('.pdf'):
         return
 
+    # 2. 🔥 เพิ่มการกรอง: ถ้าชื่อไฟล์มีคำเหล่านี้ ให้ข้ามทันที (ไม่นับ)
+    ignore_keywords = ["IT4", "หนังสือให้ความยินยอม"]
+    for keyword in ignore_keywords:
+        if keyword in file_name:
+            print(f"Ignored file (Blacklist): {file_name}")
+            return # จบการทำงาน ไม่ทำต่อ
+
     # ตัดชื่อไฟล์เอาเฉพาะชื่อคนทำสัญญา (แยกด้วย _ )
-    # ตัวอย่าง: "พิสิทธิ์ พรมศรี_contract.pdf" -> เอาแค่ "พิสิทธิ์ พรมศรี"
     if '_' in file_name:
         contract_name = file_name.split('_')[0].strip()
     else:

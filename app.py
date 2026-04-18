@@ -130,7 +130,7 @@ def handle_file(event):
         return
 
     # 2. 🔥 เพิ่มการกรอง: ถ้าชื่อไฟล์มีคำเหล่านี้ ให้ข้ามทันที (ไม่นับ)
-    ignore_keywords = ["IT4", "หนังสือให้ความยินยอม"]
+    ignore_keywords = ["IT4", "หนังสือให้ความยินยอม", "ขั้นตอนการส่งเคสของพาร์ทเนอร์", "โปรแกรมใหม่และรายละเอียดการสมัครDL+", "ร้านค้า"]
     for keyword in ignore_keywords:
         if keyword in file_name:
             print(f"Ignored file (Blacklist): {file_name}")
@@ -144,9 +144,13 @@ def handle_file(event):
         contract_name = os.path.splitext(file_name)[0].strip()
 
     group_id = event.source.group_id
-    today_str = datetime.date.today().strftime("%Y-%m-%d")
+    record_contract(group_id, contract_name)
     
-    # Sync ชื่อร้าน
+# ==========================================
+# ฟังก์ชันบันทึกยอดสัญญาและชื่อลูกค้า
+# ==========================================
+def record_contract(group_id, contract_name):
+    today_str = datetime.date.today().strftime("%Y-%m-%d")
     current_shop_name = sync_group_name(group_id)
 
     try:
@@ -193,7 +197,7 @@ def handle_file(event):
             print(f"New contract record: {contract_name}")
 
     except Exception as e:
-        print(f"Error handling file: {e}")
+        print(f"Error handling contract: {e}")
 
 
 # ==========================================
@@ -207,6 +211,20 @@ def handle_message(event):
         return
 
     group_id = event.source.group_id
+    
+    # 🔥 จัดการเคส: "ปิดเคส"
+    if text.startswith("ปิดเคส"):
+        lines = text.split('\n')
+        # ฟอร์แมตคือ
+        # 1. ปิดเคส
+        # 2. ชื่อสาขา
+        # 3. ชื่อลูกค้า
+        if len(lines) >= 3:
+            contract_name = lines[2].strip()
+            if contract_name:
+                record_contract(group_id, contract_name)
+        return # ให้จบการทำงานตรงนี้เลย ไม่ต้องเช็คคำอื่นต่อ
+
     today_str = datetime.date.today().strftime("%Y-%m-%d")
 
     msg_type = classify_message(text)

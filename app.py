@@ -214,13 +214,14 @@ def handle_message(event):
     
     # 🔥 จัดการเคส: "ปิดเคส"
     if text.startswith("ปิดเคส"):
-        lines = text.split('\n')
+        # กรองบรรทัดที่ว่างออกไป เพื่อป้องกันกรณีแอดมินเว้นบรรทัดพลาด
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
         # ฟอร์แมตคือ
         # 1. ปิดเคส
         # 2. ชื่อสาขา
         # 3. ชื่อลูกค้า
         if len(lines) >= 3:
-            contract_name = lines[2].strip()
+            contract_name = lines[2]
             if contract_name:
                 record_contract(group_id, contract_name)
         return # ให้จบการทำงานตรงนี้เลย ไม่ต้องเช็คคำอื่นต่อ

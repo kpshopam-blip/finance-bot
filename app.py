@@ -130,7 +130,7 @@ def handle_file(event):
         return
 
     # 2. 🔥 เพิ่มการกรอง: ถ้าชื่อไฟล์มีคำเหล่านี้ ให้ข้ามทันที (ไม่นับ)
-    ignore_keywords = ["IT4", "หนังสือให้ความยินยอม", "ขั้นตอนการส่งเคสของพาร์ทเนอร์", "โปรแกรมใหม่และรายละเอียดการสมัครDL+", "ร้านค้า"]
+    ignore_keywords = ["IT4", "หนังสือให้ความยินยอม", "ขั้นตอนการส่งเคสของพาร์ทเนอร์", "โปรแกรมใหม่และรายละเอียดการสมัครDL+", "ร้านค้า","Statement","channel","STM"]
     for keyword in ignore_keywords:
         if keyword in file_name:
             print(f"Ignored file (Blacklist): {file_name}")

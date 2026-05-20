@@ -12,6 +12,7 @@ LINE_CHANNEL_ACCESS_TOKEN = 'lVhohtPhKOMihlJw2qAqDhV7J+lNdDoeGbR9mpW0+lwx2cYnmV+
 LINE_CHANNEL_SECRET = '1e233aeba9151417a68ce59b5e0423e4'
 GOOGLE_SHEET_NAME = 'ระบบนับจำนวนเคส'
 CREDENTIALS_FILE = 'credentials.json'
+ADMIN_SYNC_TOKEN = os.environ.get('ADMIN_SYNC_TOKEN', '').strip()
 
 app = Flask(__name__)
 
@@ -55,6 +56,55 @@ def sync_group_name(group_id):
         print(f"Error syncing group name: {e}")
         return current_line_name
 
+def sync_all_group_names_silent():
+    sh = get_worksheet('Shops')
+    rows = sh.get_all_values()
+
+    checked_count = 0
+    updated_count = 0
+    skipped_count = 0
+    error_count = 0
+    changes = []
+    errors = []
+
+    for row_number, row in enumerate(rows, start=1):
+        group_id = row[0].strip() if len(row) > 0 and row[0] else ""
+        stored_name = row[1].strip() if len(row) > 1 and row[1] else ""
+
+        if not group_id or group_id.lower() == "group_id":
+            skipped_count += 1
+            continue
+
+        try:
+            summary = line_bot_api.get_group_summary(group_id)
+            current_line_name = summary.group_name
+            checked_count += 1
+
+            if stored_name != current_line_name:
+                sh.update_cell(row_number, 2, current_line_name)
+                updated_count += 1
+                changes.append({
+                    "group_id": group_id,
+                    "old_name": stored_name,
+                    "new_name": current_line_name
+                })
+
+        except Exception as e:
+            error_count += 1
+            errors.append({
+                "group_id": group_id,
+                "error": str(e)
+            })
+
+    return {
+        "checked": checked_count,
+        "updated": updated_count,
+        "skipped": skipped_count,
+        "errors": error_count,
+        "changes": changes,
+        "error_details": errors
+    }
+
 # ==========================================
 # ฟังก์ชันแยกประเภทข้อความ (เหมือนเดิม)
 # ==========================================
@@ -97,6 +147,41 @@ def classify_message(text):
 @app.route("/")
 def home():
     return "Hello, Boss! I am awake and working."
+
+@app.route("/admin/sync-groups", methods=['GET'])
+def admin_sync_groups():
+    if not ADMIN_SYNC_TOKEN:
+        return "ADMIN_SYNC_TOKEN is not set.", 500
+
+    if request.args.get('token') != ADMIN_SYNC_TOKEN:
+        abort(403)
+
+    try:
+        result = sync_all_group_names_silent()
+        lines = [
+            "Group name sync completed.",
+            f"Checked: {result['checked']}",
+            f"Updated: {result['updated']}",
+            f"Skipped: {result['skipped']}",
+            f"Errors: {result['errors']}"
+        ]
+
+        if result['changes']:
+            lines.append("")
+            lines.append("Updated groups:")
+            for change in result['changes']:
+                lines.append(f"- {change['old_name']} -> {change['new_name']}")
+
+        if result['error_details']:
+            lines.append("")
+            lines.append("Errors:")
+            for error in result['error_details']:
+                lines.append(f"- {error['group_id']}: {error['error']}")
+
+        return "\n".join(lines), 200, {'Content-Type': 'text/plain; charset=utf-8'}
+
+    except Exception as e:
+        return f"Group name sync failed: {e}", 500
 
 @app.route("/callback", methods=['POST'])
 def callback():

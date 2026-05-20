@@ -56,7 +56,7 @@ def sync_group_name(group_id):
         print(f"Error syncing group name: {e}")
         return current_line_name
 
-def sync_all_group_names_silent():
+def sync_all_group_names_silent(start_row=1, limit=10):
     sh = get_worksheet('Shops')
     rows = sh.get_all_values()
 
@@ -66,19 +66,30 @@ def sync_all_group_names_silent():
     error_count = 0
     changes = []
     errors = []
+    processed_count = 0
+    next_start_row = None
 
     for row_number, row in enumerate(rows, start=1):
+        if row_number < start_row:
+            continue
+
+        if processed_count >= limit:
+            next_start_row = row_number
+            break
+
         group_id = row[0].strip() if len(row) > 0 and row[0] else ""
         stored_name = row[1].strip() if len(row) > 1 and row[1] else ""
 
         if not group_id or group_id.lower() == "group_id":
             skipped_count += 1
+            processed_count += 1
             continue
 
         try:
             summary = line_bot_api.get_group_summary(group_id)
             current_line_name = summary.group_name
             checked_count += 1
+            processed_count += 1
 
             if stored_name != current_line_name:
                 sh.update_cell(row_number, 2, current_line_name)
@@ -91,6 +102,7 @@ def sync_all_group_names_silent():
 
         except Exception as e:
             error_count += 1
+            processed_count += 1
             errors.append({
                 "group_id": group_id,
                 "error": str(e)
@@ -100,6 +112,11 @@ def sync_all_group_names_silent():
         "checked": checked_count,
         "updated": updated_count,
         "skipped": skipped_count,
+        "processed": processed_count,
+        "total_rows": len(rows),
+        "start_row": start_row,
+        "limit": limit,
+        "next_start_row": next_start_row,
         "errors": error_count,
         "changes": changes,
         "error_details": errors
@@ -157,14 +174,30 @@ def admin_sync_groups():
         abort(403)
 
     try:
-        result = sync_all_group_names_silent()
+        start_row = int(request.args.get('start', 1))
+        limit = int(request.args.get('limit', 10))
+        start_row = max(start_row, 1)
+        limit = min(max(limit, 1), 50)
+
+        result = sync_all_group_names_silent(start_row=start_row, limit=limit)
         lines = [
             "Group name sync completed.",
+            f"Start row: {result['start_row']}",
+            f"Limit: {result['limit']}",
+            f"Processed: {result['processed']} / {result['total_rows']}",
             f"Checked: {result['checked']}",
             f"Updated: {result['updated']}",
             f"Skipped: {result['skipped']}",
             f"Errors: {result['errors']}"
         ]
+
+        if result['next_start_row']:
+            lines.append("")
+            lines.append(
+                "Next URL: "
+                f"/admin/sync-groups?token={request.args.get('token')}"
+                f"&start={result['next_start_row']}&limit={result['limit']}"
+            )
 
         if result['changes']:
             lines.append("")
